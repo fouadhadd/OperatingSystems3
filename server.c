@@ -9,6 +9,7 @@ typedef struct {
     pthread_cond_t isFull;
     pthread_mutex_t m;
     queue* requests;
+    request_object** running;
     int count;
 } thread_args_t;
 
@@ -47,6 +48,8 @@ void* worker_m(void* ptr) {
     pthread_mutex_t* m = &thread_args->m;
     int* count = &thread_args->count;
 
+    request_object** running = thread_args->running;
+
     while (1) {
         pthread_mutex_lock(m);
         while (is_empty(thread_args->requests)) {
@@ -54,19 +57,24 @@ void* worker_m(void* ptr) {
         }
         request_object* object = dequeue(thread_args->requests);
         (*count)++;
-        pthread_mutex_unlock(&m);
-
+        int index = 0;
+        while (running[index] != NULL) {
+            index++;
+        }
+        running[index] = object; 
         gettimeofday(&object->dispatch, NULL);
+        pthread_mutex_unlock(m);
+
         requestHandle(object->connfd, object->arrival, object->dispatch, object->t, object->log);
 
+        pthread_mutex_lock(m);
         free(object->t); // Cleanup
         Close(object->connfd); // Close the connection
         free(object);
-
-        pthread_mutex_lock(m);
+        running[index] = NULL;
         (*count)--;
         pthread_cond_signal(isFull);
-        pthread_mutex_unlock(&m);
+        pthread_mutex_unlock(m);
     }
 }
 
@@ -83,11 +91,18 @@ int main(int argc, char *argv[])
     queue requests;
     init_queue(&requests, max_queue_size);
 
+    request_object** running = (request_object**)malloc(pool_size * sizeof(request_object*));
+    for (int i = 0; i < pool_size; i++) 
+    {
+        running[i] = NULL;
+    }
+
     thread_args_t thread_args;
     pthread_cond_init(&thread_args.isEmpty, NULL);
     pthread_cond_init(&thread_args.isFull, NULL); 
     pthread_mutex_init(&thread_args.m, NULL);
     thread_args.requests = &requests;
+    thread_args.running = running;
     thread_args.count = 0;
 
     thread_args_t* arg = &thread_args;
@@ -141,9 +156,21 @@ int main(int argc, char *argv[])
 
     // TODO: HW3 — Add cleanup code for thread pool and queue
     destroy_queue(&requests);
-    for (int i = 0; i < pool_size; i++)
-    {
+    for (int i = 0; i < pool_size; i++) {
         pthread_cancel(workers[i]);
     }
+    for (int i = 0; i < pool_size; i++)
+    {
+        if (running[i] != NULL) {
+            free(running[i]->t); // Cleanup
+            Close(running[i]->connfd); // Close the connection
+            free(running[i]);
+        }
+    }
+    free(running);
     free(workers);
+
+    pthread_mutex_destroy(&thread_args.m);
+    pthread_cond_destroy(&thread_args.isEmpty);
+    pthread_cond_destroy(&thread_args.isFull);
 }

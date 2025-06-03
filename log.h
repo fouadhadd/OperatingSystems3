@@ -10,6 +10,8 @@
 // - Use appropriate synchronization primitives (e.g., pthread mutexes and condition variables).
 // - The log should allow appending entries and returning the full log content.
 
+typedef struct Log_Item log_item;
+
 typedef struct Server_Log* server_log;
 
 // Creates a new server log instance
