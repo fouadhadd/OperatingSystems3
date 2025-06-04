@@ -75,7 +75,7 @@ int get_log(server_log log, char** dst) {
             (*dst)[index++] = '\n';
             current = current->next;
         }
-        (*dst)[index-1] = '\0';
+        (*dst)[index] = '\0';
         len = index - 1;
     }
 

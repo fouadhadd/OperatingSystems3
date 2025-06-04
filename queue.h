@@ -6,7 +6,6 @@ typedef struct {
     int connfd;
     struct timeval arrival;
     struct timeval dispatch;
-    threads_stats t;
     server_log* log;
 } request_object;
 
@@ -61,7 +60,6 @@ void destroy_queue(queue* q) {
     while (q->size)
     {
         request_object* object = dequeue(&q);
-        free(object->t);
         free(object);
     }
     free(q->arr);

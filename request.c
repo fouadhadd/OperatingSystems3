@@ -221,6 +221,7 @@ void requestHandle(int fd, struct timeval arrival, struct timeval dispatch, thre
             }
 
             requestServeStatic(fd, filename, sbuf.st_size, arrival, dispatch, t_stats);
+			t_stats->stat_req++;
 
         } else {
             if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
@@ -231,12 +232,22 @@ void requestHandle(int fd, struct timeval arrival, struct timeval dispatch, thre
             }
 
             requestServeDynamic(fd, filename, cgiargs, arrival, dispatch, t_stats);
+			t_stats->dynm_req++;
         }
 
         // TODO: add log entry using add_to_log(server_log log, const char* data, int data_len);
+		char buf[MAXBUF] = {0};
+		int data_len = append_stats(buf, t_stats, arrival, dispatch);
+		add_to_log(log, buf, data_len);
 
     } else if (!strcasecmp(method, "POST")) {
         requestServePost(fd, arrival, dispatch, t_stats, log);
+		t_stats->post_req++;
+
+		char* buf;
+		get_log(log, &buf);
+		printf("%s", buf);
+		free(buf);
 
     } else {
         requestError(fd, method, "501", "Not Implemented",
