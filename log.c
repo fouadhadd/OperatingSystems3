@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <pthread.h>
 #include "log.h"
 
@@ -49,6 +50,9 @@ void destroy_log(server_log log) {
         free(toDelete->data);
         free(toDelete);
     }
+    pthread_mutex_destroy(&log->global_lock);
+    pthread_cond_destroy(&log->read_allowed);
+    pthread_cond_destroy(&log->write_allowed);
     free(log);
 }
 
@@ -64,7 +68,7 @@ int get_log(server_log log, char** dst) {
     log->readers_inside++;
     pthread_mutex_unlock(&log->global_lock); 
 
-    *dst = (char*)malloc(log->num_char + log->size + 1); // Allocate for caller
+    *dst = (char*)malloc(log->num_char + 1); // Allocate for caller
     int len = 0;
     if (*dst != NULL) {
         log_item* current = log->head;
@@ -72,11 +76,10 @@ int get_log(server_log log, char** dst) {
         while (current != NULL) {
             strncpy((*dst + index), current->data, current->len);
             index += current->len;
-            (*dst)[index++] = '\n';
             current = current->next;
         }
         (*dst)[index] = '\0';
-        len = index - 1;
+        len = index;
     }
 
     pthread_mutex_lock(&log->global_lock);
@@ -95,16 +98,17 @@ void add_to_log(server_log log, const char* data, int data_len) {
     // This function should handle concurrent access
     pthread_mutex_lock(&log->global_lock);
     log->writers_waiting++;
+    usleep(200000);
     while (log->writers_inside + log->readers_inside > 0) {
         pthread_cond_wait(&log->write_allowed, &log->global_lock);
     }
     log->writers_waiting--;
     log->writers_inside++;
-    pthread_mutex_unlock(&log->global_lock);
 
     log_item* toAdd = (log_item*) malloc(sizeof(log_item));
-    toAdd->data = (char*) malloc(data_len + 1);
-    strcpy(toAdd->data, data);
+    toAdd->data = (char*) malloc(data_len);
+    memcpy(toAdd->data, data, data_len);
+    
     toAdd->len = data_len;
     toAdd->next = NULL;
 
@@ -119,9 +123,9 @@ void add_to_log(server_log log, const char* data, int data_len) {
     log->size++;
     log->num_char += data_len;
 
-    pthread_mutex_lock(&log->global_lock);
     log->writers_inside--;
-    pthread_cond_broadcast(&log->read_allowed);
+
     pthread_cond_signal(&log->write_allowed);
+    pthread_cond_broadcast(&log->read_allowed);
     pthread_mutex_unlock(&log->global_lock);
 }

@@ -9,10 +9,9 @@ typedef struct {
     pthread_cond_t* isFull;
     pthread_mutex_t* m;
     queue* requests;
-    request_object** running;
     threads_stats t;
     int* count;
-    int* signal;
+    volatile int* signal;
 } thread_args_t;
 
 
@@ -44,52 +43,44 @@ void getargs(int *port, int *pool_size, int *max_queue_size, int argc, char *arg
 // that process requests from a synchronized queue.
 
 void* worker_m(void* ptr) {
-    
     thread_args_t* arg = (thread_args_t*)ptr; 
     pthread_cond_t* isEmpty = arg->isEmpty;
     pthread_cond_t* isFull = arg->isFull;
     pthread_mutex_t* m = arg->m;
     int* count = arg->count;
-    int* signal = arg->signal;
-
-    request_object** running = arg->running;
+    volatile int* signal = arg->signal;
 
     threads_stats t = arg->t;
 
-    while (*signal) {
+    while (1) {
         pthread_mutex_lock(m);
-        while (!(*signal) || is_empty(arg->requests)) {
-            if (!(*signal)) {
-                pthread_mutex_unlock(m);
-                free(t);
-                free(arg);
-                pthread_exit(NULL);
-            }
+        while (*signal && is_empty(arg->requests)) {
             pthread_cond_wait(isEmpty, m);
         }
-        request_object* object = dequeue(arg->requests);
-        (*count)++;
-        int index = 0;
-        while (running[index] != NULL) {
-            index++;
+
+        if (!(*signal)) {
+            pthread_mutex_unlock(m);
+            break;
         }
-        running[index] = object; 
-        gettimeofday(&object->dispatch, NULL);
+
+        request_object* object = dequeue(arg->requests);
+        struct timeval dispatch, current_time;
+        gettimeofday(&current_time, NULL);
+        timersub(&current_time, &object->arrival, &dispatch);
+        (*count)++;
         pthread_mutex_unlock(m);
 
         t->total_req++;
-        requestHandle(object->connfd, object->arrival, object->dispatch, t, object->log);
+        requestHandle(object->connfd, object->arrival, dispatch, t, object->log);
 
         pthread_mutex_lock(m);
         Close(object->connfd); // Close the connection
         free(object);
-        running[index] = NULL;
         (*count)--;
         pthread_cond_signal(isFull);
         pthread_mutex_unlock(m);
     }
 
-    free(t);
     free(arg);
     pthread_exit(NULL);
 }
@@ -118,25 +109,30 @@ int main(int argc, char *argv[])
     queue requests;
     init_queue(&requests, max_queue_size);
 
-    request_object** running = (request_object**)malloc(pool_size * sizeof(request_object*));
-    for (int i = 0; i < pool_size; i++) 
-    {
-        running[i] = NULL;
-    }
-
     pthread_t* workers = malloc(pool_size * sizeof(pthread_t));
+    if (workers == NULL) {
+        fprintf(stderr, "malloc failed");
+        exit(1);
+    }
     for (int i = 0; i < pool_size; i++)
     {
         thread_args_t* arg = (thread_args_t*) malloc(sizeof(thread_args_t));
+        if (arg == NULL) {
+            fprintf(stderr, "malloc failed");
+            exit(1);
+        }
         arg->isEmpty = &isEmpty;
         arg->isFull = &isFull;
         arg->m = &m;
         arg->requests = &requests;
-        arg->running = running;
         arg->count = &count;
         arg->signal = &signal;
 
         threads_stats t = malloc(sizeof(struct Threads_stats));
+        if (t == NULL) {
+            fprintf(stderr, "malloc failed");
+            exit(1);
+        }
         t->id = i+1;             // Thread ID (placeholder)
         t->stat_req = 0;       // Static request count
         t->dynm_req = 0;       // Dynamic request count
@@ -145,32 +141,41 @@ int main(int argc, char *argv[])
 
         arg->t = t;
 
-        pthread_create(&workers[i], NULL, worker_m, (void*)arg);
+        int rc = pthread_create(&workers[i], NULL, worker_m, (void*)arg);
+        if (rc != 0) {
+            fprintf(stderr, "Error creating thread %d: %s\n", i, strerror(rc));
+            exit(1);
+        }
     }
     
 
     listenfd = Open_listenfd(port);
     while (1) {
+
+        clientlen = sizeof(clientaddr);
+        connfd = Accept(listenfd, (SA *)&clientaddr, (socklen_t *) &clientlen);
+
         pthread_mutex_lock(&m);
 
         while ((count + current_size(&requests) >= max_queue_size)) {
             pthread_cond_wait(&isFull, &m);
         }
-
-        clientlen = sizeof(clientaddr);
-        connfd = Accept(listenfd, (SA *)&clientaddr, (socklen_t *) &clientlen);
-
         // TODO: HW3 — Record the request arrival time here
 
-        struct timeval arrival, dispatch;
-        dispatch.tv_sec = 0; dispatch.tv_usec = 0; // DEMO: dummy timestamps
+        struct timeval arrival;
         gettimeofday(&arrival, NULL);
 
         request_object* object = (request_object*) malloc(sizeof(request_object));
+        if (object == NULL) {
+            fprintf(stderr, "malloc failed");
+            exit(1);
+        }
+
         object->connfd = connfd;
         object->arrival = arrival;
-        object->dispatch = dispatch;
-        object->log = &log;
+        object->log = log;
+
+        
 
         enqueue(&requests, object);
 
@@ -193,14 +198,6 @@ int main(int argc, char *argv[])
     for (int i = 0; i < pool_size; i++) {
         pthread_join(workers[i], NULL);
     }
-    for (int i = 0; i < pool_size; i++)
-    {
-        if (running[i] != NULL) {
-            Close(running[i]->connfd); // Close the connection
-            free(running[i]);
-        }
-    }
-    free(running);
     free(workers);
 
     pthread_mutex_destroy(&m);

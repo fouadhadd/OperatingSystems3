@@ -219,10 +219,8 @@ void requestHandle(int fd, struct timeval arrival, struct timeval dispatch, thre
                              arrival, dispatch, t_stats);
                 return;
             }
-
-            requestServeStatic(fd, filename, sbuf.st_size, arrival, dispatch, t_stats);
 			t_stats->stat_req++;
-
+            requestServeStatic(fd, filename, sbuf.st_size, arrival, dispatch, t_stats);
         } else {
             if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
                 requestError(fd, filename, "403", "Forbidden",
@@ -230,9 +228,8 @@ void requestHandle(int fd, struct timeval arrival, struct timeval dispatch, thre
                              arrival, dispatch, t_stats);
                 return;
             }
-
-            requestServeDynamic(fd, filename, cgiargs, arrival, dispatch, t_stats);
 			t_stats->dynm_req++;
+            requestServeDynamic(fd, filename, cgiargs, arrival, dispatch, t_stats);
         }
 
         // TODO: add log entry using add_to_log(server_log log, const char* data, int data_len);
@@ -241,13 +238,8 @@ void requestHandle(int fd, struct timeval arrival, struct timeval dispatch, thre
 		add_to_log(log, buf, data_len);
 
     } else if (!strcasecmp(method, "POST")) {
-        requestServePost(fd, arrival, dispatch, t_stats, log);
 		t_stats->post_req++;
-
-		char* buf;
-		get_log(log, &buf);
-		printf("%s", buf);
-		free(buf);
+        requestServePost(fd, arrival, dispatch, t_stats, log);
 
     } else {
         requestError(fd, method, "501", "Not Implemented",
