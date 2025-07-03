@@ -1,6 +1,5 @@
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <pthread.h>
 #include "log.h"
 
@@ -98,7 +97,6 @@ void add_to_log(server_log log, const char* data, int data_len) {
     // This function should handle concurrent access
     pthread_mutex_lock(&log->global_lock);
     log->writers_waiting++;
-    usleep(200000);
     while (log->writers_inside + log->readers_inside > 0) {
         pthread_cond_wait(&log->write_allowed, &log->global_lock);
     }
